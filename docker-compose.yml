@@ -1,0 +1,89 @@
+version: '3.9'
+
+services:
+  app:
+    build: .
+    container_name: ai-token-optimizer
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DB_USER: tokenoptimizer
+      DB_PASS: tokenoptimizer
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - token-optimizer-net
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: token-optimizer-postgres
+    environment:
+      POSTGRES_DB: tokenoptimizer
+      POSTGRES_USER: tokenoptimizer
+      POSTGRES_PASSWORD: tokenoptimizer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokenoptimizer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - token-optimizer-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: token-optimizer-redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - token-optimizer-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: token-optimizer-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - token-optimizer-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: token-optimizer-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboard.json:/var/lib/grafana/dashboards/dashboard.json:ro
+    networks:
+      - token-optimizer-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+
+networks:
+  token-optimizer-net:
+    driver: bridge
