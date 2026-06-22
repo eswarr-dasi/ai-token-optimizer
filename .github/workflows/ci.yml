@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: tokenoptimizer_test
+          POSTGRES_USER: tokenoptimizer
+          POSTGRES_PASSWORD: tokenoptimizer
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn -B package --file pom.xml
+
+      - name: Run tests
+        run: mvn -B test
+        env:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/tokenoptimizer_test
+          SPRING_DATA_REDIS_HOST: localhost
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: target/surefire-reports/
+
+      - name: Build Docker image
+        run: docker build -t ai-token-optimizer:latest .
+
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+      - name: Run SonarQube analysis
+        run: mvn sonar:sonar -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }}
+        if: ${{ secrets.SONAR_HOST_URL != '' }}
+        continue-on-error: true
